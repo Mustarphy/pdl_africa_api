@@ -1,0 +1,52 @@
+# Keep secrets, local state and dev-only files out of the image.
+
+# Environment files and secrets (Render also drops "secret files" such as a
+# database CA certificate into the build context root; they are mounted at
+# /etc/secrets at runtime instead).
+.env
+.env.*
+*.pem
+*.key
+*.crt
+auth.json
+
+# Version control and editor files
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+
+# Dependencies are installed inside the image
+vendor
+node_modules
+
+# Local runtime state: logs, caches, sessions and locally uploaded images
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/testing
+storage/app/public/*
+storage/app/private/*
+bootstrap/cache/*.php
+public/storage
+public/hot
+
+# Tests and tooling
+tests
+phpunit.xml
+.phpunit.cache
+.phpunit.result.cache
+pint.json
+AGENTS.md
+CLAUDE.md
+
+# Docker / deployment definitions themselves
+Dockerfile
+.dockerignore
+compose.yaml
+render.yaml
+DEPLOYMENT.md

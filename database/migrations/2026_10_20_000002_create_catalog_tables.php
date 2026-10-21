@@ -115,10 +115,12 @@ return new class extends Migration
             $table->unsignedInteger('display_order')->default(0);
             $table->boolean('is_primary')->default(false);
             // Enforces at most one primary image per product at the database
-            // level (NULL for non-primary rows never collides).
+            // level (NULL for non-primary rows never collides). VIRTUAL, not
+            // STORED: MySQL 8 rejects ON DELETE CASCADE foreign keys on the
+            // base columns of stored generated columns (product_id above).
             $table->unsignedBigInteger('primary_product_id')
                 ->nullable()
-                ->storedAs('CASE WHEN is_primary = 1 THEN product_id ELSE NULL END');
+                ->virtualAs('CASE WHEN is_primary = 1 THEN product_id ELSE NULL END');
             $table->timestamps();
 
             $table->unique('primary_product_id');

@@ -33,6 +33,15 @@ class AdminAccessTest extends TestCase
         $this->assertSame('draft', $product->fresh()->status->value);
     }
 
+    public function test_guests_without_a_json_accept_header_get_a_json_401(): void
+    {
+        // Bots and scanners rarely send Accept: application/json; there is no
+        // login page to redirect them to, so this must not become a 500.
+        $this->get('/api/v1/admin/dashboard')
+            ->assertUnauthorized()
+            ->assertExactJson(['message' => 'Unauthenticated.']);
+    }
+
     public function test_non_admin_users_are_forbidden(): void
     {
         $customer = User::factory()->create();

@@ -68,6 +68,13 @@ someone an administrator.
 To remove access, change `role` back to `customer` (or delete the user) with
 `php artisan tinker`; their next request is rejected.
 
+## Docker and Render
+
+`Dockerfile` builds a production image (PHP 8.4 + Apache, port `$PORT`,
+default 10000); `render.yaml` is the Render Blueprint. See
+[DEPLOYMENT.md](DEPLOYMENT.md) for local Docker testing, environment
+variables, database setup, migrations and limitations.
+
 ## Everyday commands
 
 | Task | Command |
