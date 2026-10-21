@@ -14,6 +14,17 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Hosted behind a load balancer (Render): trust only the immediate
+        // caller, so the client IP used by the rate limiters is the one that
+        // proxy appended to X-Forwarded-For (not a value a client can forge)
+        // and HTTPS is detected from X-Forwarded-Proto.
+        $middleware->trustProxies(at: '*');
+
+        // API-only app: there is no login page to redirect guests to, so an
+        // unauthenticated request always gets a JSON 401 (not a 500 from a
+        // missing `login` route when the client omits Accept: application/json).
+        $middleware->redirectGuestsTo(fn () => null);
+
         // Sanctum SPA auth: requests from SANCTUM_STATEFUL_DOMAINS get the
         // session cookie + CSRF protection; all other API calls stay stateless.
         $middleware->statefulApi();

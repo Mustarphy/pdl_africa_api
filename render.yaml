@@ -1,0 +1,115 @@
+# Render Blueprint for the PDL Africa client demo.
+#
+# Two Docker web services:
+#   pdl-africa-api  this repo (Mustarphy/pdl_africa_api): Laravel API
+#   pdl-africa-web  Mustarphy/pdl_africa: React storefront + admin (Nginx)
+#
+# The database is an external MySQL 8 service (Render has no managed MySQL);
+# see DEPLOYMENT.md. Values marked `sync: false` are entered in the Render
+# Dashboard when the Blueprint is created; they are never stored in Git.
+#
+# Free instances spin down after 15 minutes without traffic and have an
+# ephemeral filesystem: see DEPLOYMENT.md, "Limitations".
+
+services:
+  - type: web
+    name: pdl-africa-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: APP_NAME
+        value: PDL Africa
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      # base64:... key from `php artisan key:generate --show` (DEPLOYMENT.md).
+      - key: APP_KEY
+        sync: false
+      # Defaults to this service's onrender.com URL when left unset.
+      - key: APP_URL
+        sync: false
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: LOG_LEVEL
+        value: warning
+
+      - key: DB_CONNECTION
+        value: mysql
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_DATABASE
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      # CA certificate of the MySQL provider, added as a Render "secret file"
+      # named ca.pem (mounted at /etc/secrets/ca.pem).
+      - key: MYSQL_ATTR_SSL_CA
+        value: /etc/secrets/ca.pem
+
+      # Storefront origin(s) allowed by CORS, e.g.
+      # https://pdl-africa-web.onrender.com (no trailing slash).
+      - key: FRONTEND_URLS
+        sync: false
+      # Storefront host that receives admin session cookies, e.g.
+      # pdl-africa-web.onrender.com (no scheme).
+      - key: SANCTUM_STATEFUL_DOMAINS
+        sync: false
+      - key: SESSION_SECURE_COOKIE
+        value: "true"
+      # The cache only holds rate-limit counters. A file store in the
+      # (single) container avoids MySQL 8 deadlocks on the `cache` table
+      # when the admin dashboard sends parallel requests.
+      - key: CACHE_STORE
+        value: file
+
+      - key: CATALOG_IMAGE_DISK
+        value: public
+      # Apply pending (additive) migrations at start-up. Off by default;
+      # DEPLOYMENT.md explains how to run them explicitly instead.
+      - key: RUN_MIGRATIONS
+        value: "false"
+
+  - type: web
+    name: pdl-africa-web
+    runtime: docker
+    plan: free
+    region: frankfurt
+    repo: https://github.com/Mustarphy/pdl_africa
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      # Build-time (VITE_*: public values baked into the bundle; changing
+      # one requires a new deploy of this service).
+      # Storefront -> API directly, e.g.
+      # https://pdl-africa-api.onrender.com/api/v1
+      - key: VITE_API_BASE_URL
+        sync: false
+      # Admin -> this service's own URL (proxied to the API), e.g.
+      # https://pdl-africa-web.onrender.com/api/v1
+      - key: VITE_ADMIN_API_BASE_URL
+        sync: false
+      - key: VITE_PUBLIC_SITE_URL
+        sync: false
+      - key: VITE_WHATSAPP_NUMBER
+        sync: false
+      - key: VITE_ORDER_EMAIL
+        sync: false
+      - key: VITE_LEGACY_CATALOG
+        value: "on"
+      # Runtime: where Nginx forwards /api and /sanctum, e.g.
+      # https://pdl-africa-api.onrender.com (no path, no trailing slash).
+      - key: API_UPSTREAM
+        sync: false
