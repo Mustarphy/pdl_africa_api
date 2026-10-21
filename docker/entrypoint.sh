@@ -30,9 +30,13 @@ if [[ "${APP_ENV:-production}" == "production" ]]; then
   fi
 fi
 
-# Build the config/route/event/view caches from the environment of *this*
+# Build the config/route/event caches from the environment of *this*
 # container start, so a changed variable never leaves a stale cache behind.
-php artisan optimize --no-interaction
+# (No view:cache: this API renders JSON only and has no Blade views; an
+# empty resources/views folder is not stored in Git.)
+php artisan config:cache --no-interaction
+php artisan route:cache --no-interaction
+php artisan event:cache --no-interaction
 
 # Opt-in only. `migrate --force` applies pending migrations and never drops
 # data; destructive commands (migrate:fresh, db:wipe) stay blocked in
