@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Api\V1\Catalog;
+use App\Http\Controllers\Api\V1\CheckoutController;
+use App\Http\Controllers\Api\V1\ContactController;
 use App\Http\Controllers\Api\V1\HealthController;
 use Illuminate\Support\Facades\Route;
 
@@ -12,6 +14,13 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->name('api.v1.')->group(function () {
     Route::get('health', HealthController::class)->name('health');
+
+    Route::post('checkout/initialize', [CheckoutController::class, 'initialize'])->middleware('throttle:20,1')->name('checkout.initialize');
+    Route::get('checkout/verify/{reference}', [CheckoutController::class, 'verify'])->middleware('throttle:30,1')->name('checkout.verify');
+
+    Route::post('contact', [ContactController::class, 'send'])
+        ->middleware('throttle:10,1')
+        ->name('contact.send');
 
     // Public catalog: published records only. Short shared caching keeps
     // newly published products visible within a minute.
