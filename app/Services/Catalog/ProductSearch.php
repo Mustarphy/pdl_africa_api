@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\DB;
  * relevance. It can be swapped for a dedicated engine (e.g. Laravel Scout)
  * behind this class without changing controllers or the API contract.
  *
- * @phpstan-type Filters array{q?: string, collection?: list<string>, category?: list<string>, garment?: list<string>, size?: list<string>, color?: list<string>, min_price?: int, max_price?: int, featured?: bool, sort?: string}
+ * @phpstan-type Filters array{q?: string, collection?: list<string>, category?: list<string>, occasion?: list<string>, garment?: list<string>, size?: list<string>, color?: list<string>, min_price?: int, max_price?: int, featured?: bool, sort?: string}
  */
 class ProductSearch
 {
@@ -54,6 +54,9 @@ class ProductSearch
         }
         if ($exceptFacet !== 'collection' && ! empty($filters['collection'])) {
             $query->whereHas('collections', fn ($c) => $c->published()->whereIn('slug', $filters['collection']));
+        }
+        if (! empty($filters['occasion'])) {
+            $query->whereHas('occasions', fn ($o) => $o->published()->whereIn('slug', $filters['occasion']));
         }
         if ($exceptFacet !== 'category' && ! empty($filters['category'])) {
             $query->whereHas('category', fn ($c) => $c->published()->whereIn('slug', $filters['category']));

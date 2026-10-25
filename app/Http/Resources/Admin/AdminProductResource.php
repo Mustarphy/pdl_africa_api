@@ -59,6 +59,7 @@ class AdminProductResource extends JsonResource
                 'seo_description' => $this->seo_description,
                 'legacy_key' => $this->legacy_key,
                 'collection_ids' => $this->collections->pluck('id')->values(),
+                'occasion_ids' => $this->occasions->pluck('id')->values(),
                 'variants' => $this->variants->map(fn ($v) => [
                     'id' => $v->id,
                     'sku' => $v->sku,

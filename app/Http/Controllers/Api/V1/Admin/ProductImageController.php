@@ -71,7 +71,7 @@ class ProductImageController extends Controller
 
     private function respond(Product $product, int $status = 200): JsonResponse
     {
-        $product->unsetRelations()->load(['category', 'collections', 'variants', 'images', 'primaryImage']);
+        $product->unsetRelations()->load(['category', 'collections', 'occasions', 'variants', 'images', 'primaryImage']);
 
         return (new AdminProductResource($product))->detailed()->response()->setStatusCode($status);
     }

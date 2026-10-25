@@ -88,7 +88,7 @@ class ProductController extends Controller
 
     private function detail(Product $product): AdminProductResource
     {
-        $product->unsetRelations()->load(['category', 'collections', 'variants', 'images', 'primaryImage']);
+        $product->unsetRelations()->load(['category', 'collections', 'occasions', 'variants', 'images', 'primaryImage']);
 
         return (new AdminProductResource($product))->detailed();
     }

@@ -220,6 +220,16 @@ Settings, if you create the services by hand instead of the Blueprint:
 | `CACHE_STORE` | `file` (Blueprint). The cache only holds rate-limit counters; the `database` store deadlocks on MySQL 8 when the admin sends parallel requests. |
 | `CATALOG_IMAGE_DISK` | `public` (Blueprint; see section 10) |
 | `RUN_MIGRATIONS` | `false` (Blueprint; see section 8) |
+| `FRONTEND_URL` | storefront URL used in account emails, e.g. `https://pdl-africa-web.onrender.com` |
+| `MAIL_MAILER` | `smtp` (Blueprint) |
+| `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` | from your email provider (see "Email delivery" below) |
+| `MAIL_FROM_ADDRESS` | an address on the domain verified with the provider, e.g. `no-reply@pdlafrica.com` |
+| `MAIL_FROM_NAME` | `PDL Africa` (Blueprint) |
+| `PAYSTACK_SECRET_KEY` | Paystack secret key (`sk_test_…` until go-live, then `sk_live_…`) |
+| `PAYSTACK_PUBLIC_KEY` | Paystack public key (reference only) |
+| `PAYSTACK_CURRENCY` | `NGN` (Blueprint; must match the catalogue prices) |
+| `SHIPPING_FEE_LAGOS`, `SHIPPING_FEE_NIGERIA`, `SHIPPING_FEE_INTERNATIONAL` | per zone: a fee in whole naira, `collect` (the customer pays the rider/courier on delivery), or blank to switch the zone off |
+| `SHIPPING_ESTIMATE_*` | optional delivery estimate shown to customers, e.g. `2–3 working days` |
 
 Changing an API variable takes effect on the next restart/deploy; caches
 are rebuilt at every start, so no stale configuration remains.
@@ -234,7 +244,7 @@ new deploy of this service):
 | `VITE_API_BASE_URL` | API URL + `/api/v1`, e.g. `https://pdl-africa-api.onrender.com/api/v1` |
 | `VITE_ADMIN_API_BASE_URL` | the storefront's own URL + `/api/v1`, e.g. `https://pdl-africa-web.onrender.com/api/v1` |
 | `VITE_PUBLIC_SITE_URL` | storefront URL, e.g. `https://pdl-africa-web.onrender.com` |
-| `VITE_WHATSAPP_NUMBER`, `VITE_ORDER_EMAIL` | PDL's official public contact details (leave blank to hide the buttons) |
+| `VITE_WHATSAPP_NUMBER` | PDL's official WhatsApp number (leave blank to hide the WhatsApp buttons) |
 | `VITE_LEGACY_CATALOG` | `on` (Blueprint) |
 
 Runtime (read by Nginx at start):
@@ -245,6 +255,69 @@ Runtime (read by Nginx at start):
 
 Never put database credentials, `APP_KEY` or any other secret in a `VITE_*`
 variable.
+
+Customer accounts (`/account`) use `VITE_ADMIN_API_BASE_URL` too: like the
+admin, they need first-party session cookies, so they go through the
+storefront proxy. No extra frontend variable is needed.
+
+### Payments (Paystack)
+
+1. In the Paystack dashboard (Settings → API Keys & Webhooks), copy the
+   **test** secret key into `PAYSTACK_SECRET_KEY` on `pdl-africa-api`.
+2. Set the **Test Webhook URL** to the API service directly (not the
+   storefront):
+   `https://pdl-africa-api.onrender.com/api/v1/payments/paystack/webhook`.
+   Paystack signs each event with the secret key; the API rejects anything
+   unsigned and re-checks every transaction with Paystack before changing
+   an order.
+3. Set delivery per zone (`SHIPPING_FEE_*`): a fee in naira, or `collect`
+   when customers pay the rider/courier on arrival (checkout, receipts and
+   the admin then say "paid to the rider on delivery" and Paystack charges
+   only the items). Until at least one zone is set the checkout shows
+   "delivery rates are being finalised" and cannot take payment.
+4. Run the new migrations (section 8), deploy both services, then place a
+   test order with a Paystack test card and check it appears as **New** in
+   the admin Orders page.
+5. Go live only when the business has completed Paystack's activation:
+   replace the key with `sk_live_…`, set the **Live** webhook URL to the
+   same address, and place one small real order.
+
+The customer is returned to `FRONTEND_URL/checkout/complete`, so
+`FRONTEND_URL` must be the storefront address.
+
+Unpaid orders whose webhook was missed (for example while the free API
+instance was asleep) are confirmed the next time the customer or an admin
+opens them, or by running
+`php artisan orders:reconcile-payments` (section 8 shows how to run a
+command against the production database). No scheduler is required.
+
+### Email delivery (customer accounts)
+
+Sign-up verification, password reset, email-change confirmation and
+security notices are sent by the API **synchronously** (no queue worker is
+needed). Until mail is configured, accounts still work, but customers do
+not receive their links (the API reports "email could not be sent" and logs
+the failure).
+
+1. Create an account with a transactional email provider that offers SMTP
+   on port **2525** (for example Brevo, Mailgun, SendGrid or Postmark).
+   Render's free instances block outbound SMTP on ports 25, 465 and 587, so
+   use 2525 (or upgrade the instance to a paid plan to use 587).
+2. Verify the sending domain with the provider (it gives you SPF, DKIM and
+   usually DMARC DNS records for `pdlafrica.com`; add them at the domain's
+   DNS host and wait for the provider to confirm).
+3. On `pdl-africa-api` set `MAIL_HOST`, `MAIL_PORT=2525`, `MAIL_USERNAME`,
+   `MAIL_PASSWORD` (the provider's SMTP key, never your login password),
+   `MAIL_FROM_ADDRESS` (on the verified domain) and `FRONTEND_URL`, then
+   redeploy.
+4. Test with your own address: create an account on the storefront, open
+   the verification email, then use "Forgot password". If nothing arrives,
+   check the API logs for `Swift`/`Symfony\Component\Mailer` errors and the
+   provider's activity log.
+
+Email links point at `FRONTEND_URL` (verification and email-change links
+expire after `ACCOUNT_LINK_EXPIRE_MINUTES`, default 60; reset links after
+60 minutes and work once).
 
 ## 8. Migrations and the first administrator
 
@@ -278,6 +351,28 @@ docker run --rm --env-file render-db.env -v "${PWD}/ca.pem:/certs/ca.pem:ro" pdl
 docker run --rm --env-file render-db.env -v "${PWD}/ca.pem:/certs/ca.pem:ro" pdl-africa-api php artisan migrate --force
 # Create the client's administrator (prompts for a password, hidden):
 docker run --rm -it --env-file render-db.env -v "${PWD}/ca.pem:/certs/ca.pem:ro" pdl-africa-api php artisan pdl:create-admin owner@example.com
+```
+
+The order migration (`2026_10_25_000001_upgrade_orders_for_checkout`) only
+adds columns and tables: existing orders keep their data (old `paid`
+orders become `confirmed`, the old `status` is kept as `payment_status`).
+Review it with `--pretend` first, as above.
+
+Check unfinished Paystack payments at any time (safe to repeat). Add
+`PAYSTACK_SECRET_KEY=...` to `render-db.env` first (never type it on the
+command line, where it would stay in the shell history):
+
+```powershell
+docker run --rm --env-file render-db.env -v "${PWD}\ca.pem:/certs/ca.pem:ro" pdl-africa-api php artisan orders:reconcile-payments
+```
+
+Apply the official collections (Agbada, Suits, Kaftans, Pants; Senator
+becomes Kaftans) and create the draft occasions, once, after the occasions
+migration has run (it never deletes anything; see README.md):
+
+```powershell
+docker run --rm --env-file render-db.env -v "${PWD}\ca.pem:/certs/ca.pem:ro" pdl-africa-api php artisan catalog:sync-taxonomy --dry-run
+docker run --rm --env-file render-db.env -v "${PWD}\ca.pem:/certs/ca.pem:ro" pdl-africa-api php artisan catalog:sync-taxonomy
 ```
 
 Delete `render-db.env` (and keep `ca.pem` private) when you are done.
@@ -355,7 +450,13 @@ The first request after 15 idle minutes takes about a minute (spin-up).
 | Admin sign-in fails with 419 or returns to the login page | `VITE_ADMIN_API_BASE_URL` must be the **storefront** URL; `SANCTUM_STATEFUL_DOMAINS` must be the storefront host; `API_UPSTREAM` must be the API origin. Redeploy the frontend after changing `VITE_*`. |
 | `/api/...` on the storefront returns 503 | `API_UPSTREAM` is not set on `pdl-africa-web`. |
 | Uploaded images disappear | Expected on the free plan (section 10). |
-| 429 Too Many Requests | Rate limits: 120 API requests/minute per visitor, 5 admin sign-ins/minute per email. |
+| 429 Too Many Requests | Rate limits: 120 API requests/minute per visitor, 5 admin or customer sign-ins/minute per email. |
+| Customers say verification or reset emails never arrive | Mail not configured or blocked: check `MAIL_*`, use port 2525 on the free plan, verify the sender domain, and look for mailer errors in the API logs ("Email delivery", section 7). |
+| Checkout says delivery rates are being finalised | No `SHIPPING_FEE_*` is set on `pdl-africa-api` (use a naira amount or `collect`). |
+| Checkout says "Online payment is not available right now" | `PAYSTACK_SECRET_KEY` missing, or `PAYSTACK_CURRENCY` differs from the catalogue currency (NGN). |
+| Paid order stays "Awaiting payment" | Webhook URL not set or pointing at the storefront; open the order in the admin and press **Check payment with Paystack**, or run `orders:reconcile-payments`. |
+| Email links open the wrong site or a 404 | `FRONTEND_URL` must be the storefront URL (no trailing slash). |
+| Customer sign-in works but `/account` returns to the sign-in page | Same as the admin: `VITE_ADMIN_API_BASE_URL`, `SANCTUM_STATEFUL_DOMAINS` and `API_UPSTREAM`. |
 
 Logs: Render Dashboard → service → **Logs**. Laravel writes to stderr, so
 errors appear there.
@@ -369,8 +470,16 @@ errors appear there.
 - No shell or pre-deploy command on free instances (section 8).
 - Aiven's free MySQL: 1 GB, single node; Aiven may power it off after a
   period of inactivity (it emails first; power it on in the console).
-- Admin sign-ins all reach the API through the storefront proxy, so the
-  admin login rate limit (20 attempts/minute) is shared by everyone using the
-  admin. Fine for a demo; a custom domain with the API on a subdomain removes
-  the need for the proxy.
-- Checkout, payments and customer accounts are not part of the application.
+- Admin and customer sign-ins all reach the API through the storefront
+  proxy, so the API sees one IP for every visitor and the per-IP rate limits
+  (e.g. 30 customer sign-in attempts/minute, 60 sign-ups/hour) are shared by
+  everyone. Per-email limits still apply individually. Fine for a demo; a
+  custom domain with the API on a subdomain (e.g. `api.pdlafrica.com`, with
+  `SESSION_DOMAIN=.pdlafrica.com`) removes the need for the proxy and gives
+  the API each visitor's real IP.
+- Customer accounts cover sign-up, verification, sign-in, password reset,
+  profile/security settings and order history; saved addresses are not
+  implemented.
+- A sleeping free API instance answers Paystack's first webhook slowly;
+  Paystack retries, and orders are also re-checked when opened. Refunds are
+  made in the Paystack dashboard (the app records cancellations only).
