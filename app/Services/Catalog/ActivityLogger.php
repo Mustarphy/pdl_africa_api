@@ -4,6 +4,7 @@ namespace App\Services\Catalog;
 
 use App\Models\ActivityLog;
 use App\Models\Category;
+use App\Models\Occasion;
 use App\Models\Product;
 use App\Models\ProductCollection;
 use App\Models\User;
@@ -21,6 +22,7 @@ class ActivityLogger
                 $subject instanceof Product => 'product',
                 $subject instanceof ProductCollection => 'collection',
                 $subject instanceof Category => 'category',
+                $subject instanceof Occasion => 'occasion',
                 default => class_basename($subject),
             },
             'subject_id' => $subject->getKey(),

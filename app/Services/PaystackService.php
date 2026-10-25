@@ -2,65 +2,95 @@
 
 namespace App\Services;
 
+use App\Services\Payments\PaystackRejected;
+use App\Services\Payments\PaystackUnavailable;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
-use RuntimeException;
 
+/**
+ * Thin client for Paystack's Transactions API (hosted checkout). The secret
+ * key stays on the server: it is never returned, logged or put in errors.
+ */
 class PaystackService
 {
-    private string $secretKey;
+    private ?string $secretKey;
+
     private string $baseUrl;
 
     public function __construct()
     {
         $this->secretKey = config('services.paystack.secret_key');
-        $this->baseUrl   = rtrim(config('services.paystack.url', 'https://api.paystack.co'), '/');
+        $this->baseUrl = rtrim(config('services.paystack.url') ?: 'https://api.paystack.co', '/');
+    }
+
+    public function isConfigured(): bool
+    {
+        return (bool) $this->secretKey;
+    }
+
+    public function secretKey(): ?string
+    {
+        return $this->secretKey;
     }
 
     /**
-     * Initialize a Paystack transaction and return the authorization URL.
+     * Starts a transaction and returns Paystack's data (authorization_url,
+     * access_code, reference).
      *
      * @param  array{email: string, amount: int, currency: string, reference: string, callback_url: string, metadata: array<string, mixed>}  $payload
      * @return array{authorization_url: string, access_code: string, reference: string}
+     *
+     * @throws PaystackUnavailable
      */
     public function initialize(array $payload): array
     {
-        try {
-            $response = Http::withToken($this->secretKey)
-                ->acceptJson()
-                ->post("{$this->baseUrl}/transaction/initialize", $payload);
-        } catch (ConnectionException $e) {
-            throw new RuntimeException('Could not reach Paystack. Please try again.', 0, $e);
-        }
+        $response = $this->send(fn (PendingRequest $http) => $http->post("{$this->baseUrl}/transaction/initialize", $payload));
 
-        if (! $response->successful()) {
-            $message = $response->json('message') ?? 'Paystack initialization failed.';
-            throw new RuntimeException($message);
+        if ($response->clientError()) {
+            throw new PaystackRejected('Paystack rejected the payment details ('.($response->json('message') ?: 'HTTP '.$response->status()).').');
+        }
+        if (! $response->successful() || ! $response->json('data.authorization_url')) {
+            throw new PaystackUnavailable('Paystack could not start the payment ('.($response->json('message') ?: 'HTTP '.$response->status()).').');
         }
 
         return $response->json('data');
     }
 
     /**
-     * Verify a completed transaction by its reference.
+     * Paystack's authoritative record of a transaction, or null when the
+     * reference is unknown to Paystack (never started).
      *
-     * @return array<string, mixed>
+     * @return array<string, mixed>|null
+     *
+     * @throws PaystackUnavailable
      */
-    public function verify(string $reference): array
+    public function verify(string $reference): ?array
     {
-        try {
-            $response = Http::withToken($this->secretKey)
-                ->acceptJson()
-                ->get("{$this->baseUrl}/transaction/verify/{$reference}");
-        } catch (ConnectionException $e) {
-            throw new RuntimeException('Could not reach Paystack. Please try again.', 0, $e);
-        }
+        $response = $this->send(fn (PendingRequest $http) => $http->get("{$this->baseUrl}/transaction/verify/".rawurlencode($reference)));
 
-        if (! $response->successful()) {
-            $message = $response->json('message') ?? 'Paystack verification failed.';
-            throw new RuntimeException($message);
+        if (in_array($response->status(), [400, 404], true)) {
+            return null;
+        }
+        if (! $response->successful() || ! is_array($response->json('data'))) {
+            throw new PaystackUnavailable('Paystack could not verify the payment (HTTP '.$response->status().').');
         }
 
         return $response->json('data');
+    }
+
+    /** @param  callable(PendingRequest): Response  $call */
+    private function send(callable $call): Response
+    {
+        if (! $this->isConfigured()) {
+            throw new PaystackUnavailable('Paystack is not configured (PAYSTACK_SECRET_KEY).');
+        }
+
+        try {
+            return $call(Http::withToken($this->secretKey)->acceptJson()->timeout(20)->connectTimeout(8));
+        } catch (ConnectionException $e) {
+            throw new PaystackUnavailable('Could not reach Paystack.', previous: $e);
+        }
     }
 }

@@ -17,7 +17,7 @@ class ProductIndexRequest extends FormRequest
     protected function prepareForValidation(): void
     {
         // Accept both ?size=M and ?size[]=M&size[]=L.
-        foreach (['collection', 'category', 'garment', 'size', 'color'] as $key) {
+        foreach (['collection', 'category', 'occasion', 'garment', 'size', 'color'] as $key) {
             if (is_string($this->input($key))) {
                 $this->merge([$key => [$this->input($key)]]);
             }
@@ -33,6 +33,7 @@ class ProductIndexRequest extends FormRequest
             'q' => ['sometimes', 'nullable', 'string', 'max:100'],
             'collection' => $list, 'collection.*' => $item,
             'category' => $list, 'category.*' => $item,
+            'occasion' => $list, 'occasion.*' => $item,
             'garment' => $list, 'garment.*' => $item,
             'size' => $list, 'size.*' => $item,
             'color' => $list, 'color.*' => $item,
@@ -54,7 +55,7 @@ class ProductIndexRequest extends FormRequest
             $data['featured'] = $this->boolean('featured');
         }
 
-        return collect($data)->only(['q', 'collection', 'category', 'garment', 'size', 'color', 'min_price', 'max_price', 'featured', 'sort'])->all();
+        return collect($data)->only(['q', 'collection', 'category', 'occasion', 'garment', 'size', 'color', 'min_price', 'max_price', 'featured', 'sort'])->all();
     }
 
     public function perPage(): int

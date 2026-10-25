@@ -53,6 +53,12 @@ class Product extends Model
         return $this->belongsTo(Category::class);
     }
 
+    /** @return BelongsToMany<Occasion, $this> */
+    public function occasions(): BelongsToMany
+    {
+        return $this->belongsToMany(Occasion::class)->withPivot('position');
+    }
+
     /** @return BelongsToMany<ProductCollection, $this> */
     public function collections(): BelongsToMany
     {

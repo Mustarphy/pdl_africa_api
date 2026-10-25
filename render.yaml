@@ -66,6 +66,50 @@ services:
         sync: false
       - key: SESSION_SECURE_COOKIE
         value: "true"
+
+      # Customer account emails (DEPLOYMENT.md, "Email delivery"). Free
+      # Render services cannot use SMTP ports 25/465/587: use a provider
+      # port such as 2525. Credentials are entered in the Dashboard only.
+      - key: MAIL_MAILER
+        value: smtp
+      - key: MAIL_HOST
+        sync: false
+      - key: MAIL_PORT
+        sync: false
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      # Address on the provider-verified sending domain.
+      - key: MAIL_FROM_ADDRESS
+        sync: false
+      - key: MAIL_FROM_NAME
+        value: PDL Africa
+      # Paystack (DEPLOYMENT.md, "Payments"). sk_test_... until go-live.
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: PAYSTACK_CURRENCY
+        value: NGN
+      # Delivery per zone: whole naira, `collect` (customer pays the rider on
+      # delivery) or blank (zone off: no online checkout to that destination).
+      - key: SHIPPING_FEE_LAGOS
+        sync: false
+      - key: SHIPPING_ESTIMATE_LAGOS
+        sync: false
+      - key: SHIPPING_FEE_NIGERIA
+        sync: false
+      - key: SHIPPING_ESTIMATE_NIGERIA
+        sync: false
+      - key: SHIPPING_FEE_INTERNATIONAL
+        sync: false
+      - key: SHIPPING_ESTIMATE_INTERNATIONAL
+        sync: false
+      # Storefront URL used in email links, e.g.
+      # https://pdl-africa-web.onrender.com (no trailing slash).
+      - key: FRONTEND_URL
+        sync: false
       # The cache only holds rate-limit counters. A file store in the
       # (single) container avoids MySQL 8 deadlocks on the `cache` table
       # when the admin dashboard sends parallel requests.
@@ -104,8 +148,6 @@ services:
       - key: VITE_PUBLIC_SITE_URL
         sync: false
       - key: VITE_WHATSAPP_NUMBER
-        sync: false
-      - key: VITE_ORDER_EMAIL
         sync: false
       - key: VITE_LEGACY_CATALOG
         value: "on"

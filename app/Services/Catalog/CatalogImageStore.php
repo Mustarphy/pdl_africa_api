@@ -21,7 +21,7 @@ use Throwable;
  */
 class CatalogImageStore
 {
-    private const KEY_PATTERN = '#^catalog/(products|collections)/[0-9a-f-]{36}$#';
+    private const KEY_PATTERN = '#^catalog/(products|collections|occasions)/[0-9a-f-]{36}$#';
 
     /** @var array<int, string> */
     private const DECODERS = [
@@ -36,7 +36,7 @@ class CatalogImageStore
     }
 
     /**
-     * @param  'products'|'collections'  $folder
+     * @param  'products'|'collections'|'occasions'  $folder
      * @return array{key: string, width: int, height: int, widths: list<int>}
      */
     public function store(UploadedFile $file, string $folder): array

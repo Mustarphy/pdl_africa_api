@@ -3,135 +3,145 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\CheckoutQuoteRequest;
+use App\Http\Requests\CheckoutRequest;
 use App\Models\Order;
+use App\Services\Orders\CartPricer;
+use App\Services\Orders\OrderAccess;
+use App\Services\Orders\OrderPlacer;
+use App\Services\Orders\PaymentProcessor;
+use App\Services\Orders\ShippingCalculator;
+use App\Services\Payments\PaystackRejected;
+use App\Services\Payments\PaystackUnavailable;
 use App\Services\PaystackService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
-use Illuminate\Support\Str;
-use RuntimeException;
+use Illuminate\Support\Facades\Cache;
 
+/**
+ * Checkout: a server-side quote for the cart, then a pending order and a
+ * Paystack transaction for exactly that quote. The browser only ever sends
+ * product ids, variant ids and quantities.
+ */
 class CheckoutController extends Controller
 {
-    public function __construct(private PaystackService $paystack) {}
+    public function __construct(
+        private readonly CartPricer $pricer,
+        private readonly ShippingCalculator $shipping,
+        private readonly OrderPlacer $placer,
+        private readonly OrderAccess $access,
+        private readonly PaymentProcessor $payments,
+        private readonly PaystackService $paystack,
+    ) {}
 
-    /**
-     * Create an order and initialize a Paystack transaction.
-     *
-     * Expected JSON body:
-     * {
-     *   "customer_name": "...",
-     *   "customer_email": "...",
-     *   "customer_phone": "...",       // optional
-     *   "shipping_address": "...",     // optional
-     *   "items": [
-     *     { "slug": "...", "name": "...", "size": "...", "color": "...",
-     *       "quantity": 1, "unit_price": 50000, "currency": "NGN" }
-     *   ],
-     *   "callback_url": "http://localhost:5173/checkout/callback"
-     * }
-     */
-    public function initialize(Request $request): JsonResponse
+    public function quote(CheckoutQuoteRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'customer_name'          => ['required', 'string', 'max:150'],
-            'customer_email'         => ['required', 'email', 'max:150'],
-            'customer_phone'         => ['nullable', 'string', 'max:30'],
-            'shipping_address'       => ['nullable', 'string', 'max:500'],
-            'callback_url'           => ['required', 'url'],
-            'items'                  => ['required', 'array', 'min:1'],
-            'items.*.name'           => ['required', 'string'],
-            'items.*.slug'           => ['required', 'string'],
-            'items.*.quantity'       => ['required', 'integer', 'min:1'],
-            'items.*.unit_price'     => ['required', 'integer', 'min:0'],
-            'items.*.currency'       => ['required', 'string', 'size:3'],
-            'items.*.size'           => ['nullable', 'string'],
-            'items.*.color'          => ['nullable', 'string'],
-        ]);
+        $cart = $this->pricer->price($request->cartItems());
+        $shipping = $this->shipping->quote($request->validated('country_code'), $request->validated('state'));
 
-        // Derive totals from line items (all items must share one currency).
-        $currency = $validated['items'][0]['currency'];
-        $total    = array_reduce(
-            $validated['items'],
-            fn (int $carry, array $item) => $carry + ($item['unit_price'] * $item['quantity']),
-            0,
-        );
-
-        $reference = 'PDL-' . strtoupper(Str::random(12));
-
-        $order = Order::create([
-            'reference'       => $reference,
-            'customer_name'   => $validated['customer_name'],
-            'customer_email'  => $validated['customer_email'],
-            'customer_phone'  => $validated['customer_phone'] ?? null,
-            'shipping_address'=> $validated['shipping_address'] ?? null,
-            'amount'          => $total,
-            'currency'        => $currency,
-            'status'          => 'pending',
-            'items'           => $validated['items'],
-        ]);
-
-        try {
-            $paystackData = $this->paystack->initialize([
-                'email'        => $order->customer_email,
-                'amount'       => $order->amount,
-                'currency'     => $order->currency,
-                'reference'    => $order->reference,
-                'callback_url' => $validated['callback_url'],
-                'metadata'     => [
-                    'order_id'      => $order->id,
-                    'customer_name' => $order->customer_name,
-                    'custom_fields' => [
-                        ['display_name' => 'Customer Name', 'variable_name' => 'customer_name', 'value' => $order->customer_name],
-                        ['display_name' => 'Phone',         'variable_name' => 'phone',         'value' => $order->customer_phone ?? ''],
-                    ],
-                ],
-            ]);
-        } catch (RuntimeException $e) {
-            $order->delete();
-            return response()->json(['message' => $e->getMessage()], 502);
-        }
-
-        return response()->json([
-            'authorization_url' => $paystackData['authorization_url'],
-            'reference'         => $order->reference,
-        ]);
+        return response()->json(['data' => $this->present($cart, $shipping)]);
     }
 
-    /**
-     * Verify a completed Paystack transaction and mark the order as paid.
-     */
-    public function verify(string $reference): JsonResponse
+    public function store(CheckoutRequest $request): JsonResponse
     {
-        $order = Order::where('reference', $reference)->firstOrFail();
-
-        if ($order->status === 'paid') {
-            return response()->json(['status' => 'paid', 'order_id' => $order->id]);
+        // Prices are stored in catalog.currency; never charge them in another
+        // currency (no conversion is done).
+        if (! $this->paystack->isConfigured()
+            || strtoupper((string) config('services.paystack.currency')) !== config('catalog.currency')) {
+            return response()->json(['message' => 'Online payment is not available right now. Please order by WhatsApp or try again later.'], 503);
         }
 
+        $key = $request->validated('idempotency_key');
+        if ($existing = Order::where('idempotency_key', $key)->first()) {
+            return $this->resume($request, $existing);
+        }
+
+        $cart = $this->pricer->price($request->cartItems());
+        $shipping = $this->shipping->quote($request->validated('country_code'), $request->validated('state'));
+        $quote = $this->present($cart, $shipping);
+        if ($quote['issues'] !== []) {
+            return response()->json([
+                'message' => 'Some items in your bag have changed. Please review them before paying.',
+                'code' => 'cart_changed',
+                'quote' => $quote,
+            ], 422);
+        }
+        if ($quote['shipping'] === null) {
+            return response()->json([
+                'message' => 'We cannot take online orders for delivery to this address yet. Please contact us to arrange delivery.',
+                'errors' => ['country_code' => ['Online delivery is not available for this location yet.']],
+                'quote' => $quote,
+            ], 422);
+        }
+        if ($quote['total'] !== (int) $request->validated('expected_total')) {
+            return response()->json([
+                'message' => 'Prices or delivery have changed since you started checkout. Please check the new total.',
+                'code' => 'price_changed',
+                'quote' => $quote,
+            ], 409);
+        }
+
+        $order = $this->placer->place(
+            $request->safe()->only(['name', 'email', 'phone', 'address_line1', 'address_line2', 'city', 'state', 'postal_code', 'country_code', 'delivery_notes']),
+            $cart,
+            $shipping,
+            $request->user(),
+            $key,
+        );
+        $this->access->grant($request, $order);
+
+        return $this->paymentResponse($order, 201);
+    }
+
+    /** A repeated submission (double click, refresh, retry) of one checkout. */
+    private function resume(CheckoutRequest $request, Order $order): JsonResponse
+    {
+        if (! $this->access->allows($request, $order)) {
+            return response()->json(['message' => 'This checkout has already been used. Please refresh the page.'], 409);
+        }
+        if (! $order->canBePaid()) {
+            return response()->json(['data' => ['reference' => $order->reference, 'authorization_url' => null, 'paid' => $order->isPaid()]]);
+        }
+
+        return $this->paymentResponse($order, 200);
+    }
+
+    private function paymentResponse(Order $order, int $status): JsonResponse
+    {
         try {
-            $data = $this->paystack->verify($reference);
-        } catch (RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 502);
+            // One payment start per order at a time (concurrent submissions).
+            $url = Cache::lock('order-payment:'.$order->id, 30)->block(15, fn () => $this->payments->checkoutUrl($order));
+        } catch (PaystackRejected $e) {
+            report($e);
+
+            return response()->json([
+                'message' => 'Paystack could not accept these payment details. Please check your email address and try again.',
+                'code' => 'payment_rejected',
+                'data' => ['reference' => $order->reference],
+            ], 422);
+        } catch (PaystackUnavailable $e) {
+            report($e);
+
+            return response()->json([
+                'message' => 'We could not connect to Paystack. Your order is saved; please try paying again in a moment.',
+                'code' => 'payment_unavailable',
+                'data' => ['reference' => $order->reference],
+            ], 503);
         }
 
-        $paystackStatus = $data['status'] ?? 'failed';
+        return response()->json(['data' => ['reference' => $order->reference, 'authorization_url' => $url, 'paid' => false]], $status);
+    }
 
-        $order->update([
-            'status'        => $paystackStatus === 'success' ? 'paid' : 'failed',
-            'paystack_data' => $data,
-        ]);
-
-        if ($paystackStatus !== 'success') {
-            return response()->json(['message' => 'Payment was not successful.', 'status' => 'failed'], 402);
-        }
-
-        return response()->json([
-            'status'   => 'paid',
-            'order_id' => $order->id,
-            'amount'   => $order->amount,
-            'currency' => $order->currency,
-            'name'     => $order->customer_name,
-            'email'    => $order->customer_email,
-        ]);
+    /** @return array<string, mixed> */
+    private function present(array $cart, ?array $shipping): array
+    {
+        return [
+            'currency' => $cart['currency'],
+            'lines' => array_map(fn (array $line) => collect($line)->except('stock')->all(), $cart['lines']),
+            'issues' => $cart['issues'],
+            'subtotal' => $cart['subtotal'],
+            'shipping' => $shipping,
+            'shipping_configured' => $this->shipping->isConfigured(),
+            'total' => $shipping ? $cart['subtotal'] + $shipping['fee'] : null,
+        ];
     }
 }

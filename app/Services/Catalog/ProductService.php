@@ -33,7 +33,7 @@ class ProductService
         $isNew = ! $product->exists;
 
         return DB::transaction(function () use ($product, $data, $actor, $isNew) {
-            $attributes = collect($data)->except(['collection_ids', 'variants'])->all();
+            $attributes = collect($data)->except(['collection_ids', 'occasion_ids', 'variants'])->all();
             if (array_key_exists('slug', $attributes) && blank($attributes['slug'])) {
                 unset($attributes['slug']);
             }
@@ -50,6 +50,11 @@ class ProductService
                     )->all(),
                 );
                 $changed[] = 'collections';
+            }
+
+            if (array_key_exists('occasion_ids', $data)) {
+                $product->occasions()->sync(collect($data['occasion_ids'])->values()->all());
+                $changed[] = 'occasions';
             }
 
             if (array_key_exists('variants', $data)) {

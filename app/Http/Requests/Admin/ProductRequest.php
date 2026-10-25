@@ -53,6 +53,8 @@ class ProductRequest extends FormRequest
 
             'collection_ids' => ['sometimes', 'array', 'max:20'],
             'collection_ids.*' => ['integer', 'distinct', Rule::exists('collections', 'id')],
+            'occasion_ids' => ['sometimes', 'array', 'max:20'],
+            'occasion_ids.*' => ['integer', 'distinct', Rule::exists('occasions', 'id')],
 
             'variants' => ['sometimes', 'array', 'max:100'],
             'variants.*.id' => ['sometimes', 'nullable', 'integer'],

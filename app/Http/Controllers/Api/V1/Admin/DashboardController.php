@@ -3,15 +3,17 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Enums\CatalogStatus;
+use App\Enums\OrderStatus;
 use App\Http\Controllers\Controller;
 use App\Models\ActivityLog;
 use App\Models\Category;
+use App\Models\Order;
 use App\Models\Product;
 use App\Models\ProductCollection;
 use App\Services\Catalog\PublicationRules;
 use Illuminate\Http\JsonResponse;
 
-/** Catalog health only: there are no orders/sales yet, so none are shown. */
+/** Catalogue health plus order counts (no revenue charts). */
 class DashboardController extends Controller
 {
     public function __invoke(PublicationRules $rules): JsonResponse
@@ -27,6 +29,12 @@ class DashboardController extends Controller
             'products' => $countByStatus(Product::class),
             'collections' => $countByStatus(ProductCollection::class),
             'categories' => ['total' => Category::count()],
+            'orders' => [
+                'awaiting_fulfilment' => Order::whereIn('status', [OrderStatus::Confirmed, OrderStatus::Processing, OrderStatus::ReadyForDispatch])->count(),
+                'new' => Order::where('status', OrderStatus::Confirmed)->count(),
+                'awaiting_payment' => Order::where('status', OrderStatus::PendingPayment)->count(),
+                'total' => Order::count(),
+            ],
             'products_without_images' => Product::whereDoesntHave('images')->where('status', '!=', CatalogStatus::Archived)->count(),
             'drafts_not_ready' => $drafts->filter(fn (Product $p) => $rules->productIssues($p) !== [])->count(),
             'recent_activity' => ActivityLog::with('user:id,name')->latest('created_at')->latest('id')->limit(12)->get()
